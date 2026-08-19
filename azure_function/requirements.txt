@@ -1,0 +1,6 @@
+azure-functions
+torch
+scikit-learn
+numpy
+pandas
+joblib
