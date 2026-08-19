@@ -1,26 +1,30 @@
 """
-Simulateur de capteurs IoT temps réel.
+Real-time IoT sensor simulator.
 
-Rejoue le dataset NASA C-MAPSS (dégradation de turboréacteurs) ligne par
-ligne, moteur par moteur, en respectant un délai entre chaque cycle pour
-simuler un flux de capteurs en direct.
+Replays the NASA C-MAPSS dataset (turbofan engine degradation) row by
+row, engine by engine, with a delay between each cycle to simulate a
+live sensor stream.
 
-Deux modes de sortie :
-- "print"  : affiche les mesures dans le terminal (aucun broker requis,
-             utile pour valider la logique avant de brancher le cloud)
-- "mqtt"   : publie chaque mesure sur un broker MQTT (local ou IoT Hub /
-             IoT Core une fois la connexion cloud configurée)
+Three output modes:
+- "print" : prints readings to the terminal (no broker required, useful
+            to validate the logic before connecting to the cloud)
+- "mqtt"  : publishes each reading to an MQTT broker (local, e.g.
+            Mosquitto)
+- "azure" : publishes each reading to Azure IoT Hub, using the device
+            connection string from a local .env file
 
-Format attendu du fichier source (train_FD001.txt, séparateur espace,
-sans en-tête) : voir README.md pour le lien de téléchargement.
+Expected format of the source file (train_FD001.txt, space-separated,
+no header): see README.md for the download link.
 """
 
 import argparse
 import json
+import os
 import time
 from pathlib import Path
 
 import pandas as pd
+from dotenv import load_dotenv
 
 COLUMN_NAMES = (
     ["unit_id", "cycle", "op_setting_1", "op_setting_2", "op_setting_3"]
@@ -29,13 +33,13 @@ COLUMN_NAMES = (
 
 
 def load_cmapss(filepath: Path) -> pd.DataFrame:
-    """Charge un fichier train_FDxxx.txt du dataset C-MAPSS."""
+    """Load a train_FDxxx.txt file from the C-MAPSS dataset."""
     df = pd.read_csv(filepath, sep=r"\s+", header=None, names=COLUMN_NAMES)
     return df
 
 
 def make_reading(row: pd.Series) -> dict:
-    """Construit le message capteur envoyé pour un cycle donné."""
+    """Build the sensor message sent for a given cycle."""
     return {
         "unit_id": int(row["unit_id"]),
         "cycle": int(row["cycle"]),
@@ -80,17 +84,51 @@ def stream_mqtt(
     client.disconnect()
 
 
+def stream_azure(df: pd.DataFrame, unit_id: int, delay: float) -> None:
+    """Publish the stream to Azure IoT Hub, using the device registered in .env.
+
+    Reuses the exact same reading/message-building logic as
+    stream_print() and stream_mqtt() — only the way the message is sent
+    changes.
+    """
+    from azure.iot.device import IoTHubDeviceClient, Message
+
+    load_dotenv()
+    connection_string = os.getenv("AZURE_IOT_CONNECTION_STRING")
+    if not connection_string:
+        raise RuntimeError(
+            "AZURE_IOT_CONNECTION_STRING is missing. "
+            "Create a .env file at the project root with this variable "
+            "(see .env.example)."
+        )
+
+    client = IoTHubDeviceClient.create_from_connection_string(connection_string)
+    client.connect()
+    print("Connected to Azure IoT Hub.")
+
+    unit_df = df[df["unit_id"] == unit_id].sort_values("cycle")
+    for _, row in unit_df.iterrows():
+        reading = make_reading(row)
+        message = Message(json.dumps(reading))
+        client.send_message(message)
+        print(f"Sent: cycle {reading['cycle']}")
+        time.sleep(delay)
+
+    client.disconnect()
+    print("Disconnected.")
+
+
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Simulateur de capteurs IoT")
+    parser = argparse.ArgumentParser(description="IoT sensor simulator")
     parser.add_argument(
         "--data",
         type=Path,
         default=Path(__file__).resolve().parents[2] / "data" / "train_FD001.txt",
-        help="Chemin vers le fichier train_FD001.txt",
+        help="Path to the train_FD001.txt file",
     )
-    parser.add_argument("--unit-id", type=int, default=1, help="ID du moteur à rejouer")
-    parser.add_argument("--delay", type=float, default=0.5, help="Délai entre deux cycles (secondes)")
-    parser.add_argument("--mode", choices=["print", "mqtt"], default="print")
+    parser.add_argument("--unit-id", type=int, default=1, help="Engine ID to replay")
+    parser.add_argument("--delay", type=float, default=0.5, help="Delay between cycles (seconds)")
+    parser.add_argument("--mode", choices=["print", "mqtt", "azure"], default="print")
     parser.add_argument("--broker-host", default="localhost")
     parser.add_argument("--broker-port", type=int, default=1883)
     parser.add_argument("--topic", default="sensors/turbofan")
@@ -98,16 +136,18 @@ def main() -> None:
 
     if not args.data.exists():
         raise FileNotFoundError(
-            f"Fichier introuvable : {args.data}\n"
-            "Télécharge train_FD001.txt (voir README.md) et place-le dans data/."
+            f"File not found: {args.data}\n"
+            "Download train_FD001.txt (see README.md) and place it in data/."
         )
 
     df = load_cmapss(args.data)
 
     if args.mode == "print":
         stream_print(df, args.unit_id, args.delay)
-    else:
+    elif args.mode == "mqtt":
         stream_mqtt(df, args.unit_id, args.delay, args.broker_host, args.broker_port, args.topic)
+    elif args.mode == "azure":
+        stream_azure(df, args.unit_id, args.delay)
 
 
 if __name__ == "__main__":

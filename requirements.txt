@@ -2,3 +2,6 @@ pandas
 numpy
 paho-mqtt
 python-dotenv
+azure-iot-device
+scikit-learn
+torch
