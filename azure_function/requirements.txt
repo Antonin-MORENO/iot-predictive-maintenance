@@ -1,5 +1,12 @@
+# Azure Functions runtime
 azure-functions
+
+# PyTorch CPU-only build — far smaller than the default torch (~200MB vs ~800MB)
+# because it excludes CUDA/GPU libraries we don't need for inference.
+--extra-index-url https://download.pytorch.org/whl/cpu
 torch
+
+# Scientific stack
 scikit-learn
 numpy
 pandas
