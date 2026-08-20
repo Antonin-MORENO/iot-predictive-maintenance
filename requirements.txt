@@ -1,8 +1,10 @@
 pandas
 numpy
-paho-mqtt
-python-dotenv
-azure-iot-device
 scikit-learn
 torch
-matplotlib
+joblib
+azure-iot-device
+azure-eventhub
+python-dotenv
+requests
+streamlit
